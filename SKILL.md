@@ -5,7 +5,7 @@ description: Draft a result-driven LinkedIn post + AI-generated tree architectur
 
 # /linkedin-post — Reusable LinkedIn posting workflow
 
-End-to-end skill for builder-voice LinkedIn posts with optional architecture diagrams. Built from a battle-tested run on 2026-05-13. The browser automation paths are validated against current chatgpt.com and linkedin.com DOM.
+End-to-end skill for builder-voice LinkedIn posts with optional architecture diagrams. Built from a battle-tested run on 2026-05-13, extended 2026-05-19 with the codebase-research step. The browser automation paths are validated against current chatgpt.com and linkedin.com DOM.
 
 ## Prerequisites
 
@@ -46,10 +46,26 @@ The actual distilled value of this skill. Every post follows:
 
 **Allowed emojis:** in bullets only, never in body prose, never in hashtags.
 
+## Codebase research (when the post describes real repo work)
+
+When the post is about something the user actually built in a repo — they name a repo, a branch, a feature, or say "review the work in that branch" — do NOT draft from the user's narrative alone. The spoken narrative is the *marketing angle*; the repo is the *ground truth*. A diagram or a bullet list built only from the narrative will be plausibly but specifically wrong (wrong component names, wrong data flow, invented services).
+
+Run this BEFORE generating the diagram, and ideally before finalizing the post's bullets:
+
+1. **Locate the repo and branch.** `git -C <repo> branch --show-current`, then `git log --oneline -30 | grep -iE "<feature-keyword>"` to find the feature's commits.
+2. **Read the commits.** `git show --stat <sha>` on the substantive ones — commit bodies often explain intent, trade-offs, and gotchas.
+3. **Read the actual source.** Find the feature's service/module directory; read each file's header docblock (they usually spell out intent, the data shape, and the data flow). 20 lines per file is enough.
+4. **Read the feature's docs.** CHANGELOG entry, any spec or plan markdown.
+5. **Write a 5–10 line summary of the REAL architecture:** entry point, the hot path, the data flow, each component and what it does, and any cold/offline/calibration paths. Show this summary to the user.
+6. **Ground the diagram and fact-check the post on this summary** — real component names, real flow, real direction of the accent/write-back path.
+
+This costs a handful of tool calls and turns a generic guess into a diagram that matches the merged code. Always worth it when a repo exists. Skip it only for conceptual posts with no underlying codebase.
+
 ## Diagram opinions
 
 When the user wants a visual (default: ask), the diagram should be:
 
+- **Accurate to the code, when there is code.** If the Codebase research step ran, the diagram must reflect the *real* architecture — real component names, real entry point, real data flow, including any cold/calibration path. A generic tree built from the verbal pitch is the most common way this skill ships a wrong diagram. A conceptual hub-and-spoke is acceptable only for posts with no underlying repo.
 - **Tree top-down** layout (not centered hub-and-spoke). Top node = the agent/system. Branches = the integrations/services. Sub-branches = the actions per service. Optionally a bottom node = the output.
 - **Real service logos** for each node — let the image model render actual Google Analytics, Google Ads, Shopify, PostgreSQL, Anthropic etc. logos. Specify in prompt.
 - **One accent color** for the most important / write-back path (e.g., orange border on the service the agent mutates).
@@ -97,19 +113,21 @@ When the user wants a visual (default: ask), the diagram should be:
 
 2. **Save the brief** to `/tmp/linkedin-brief-<timestamp>.md` so it's not lost mid-flow.
 
-3. **Generate post text** — by default, use chatgpt.com browser path (Thinking model, separate turn from image). If user has codex CLI working and not over usage limit, that's also valid. Build a focused prompt embedding the brief + the opinionated structure rules + the banned-vocabulary list.
+3. **Codebase research** — if the post describes real repo work, run the **Codebase research** section above. Fold the architecture summary into the brief file. Skip only for conceptual posts with no repo.
 
-4. **Generate diagram** (if requested) — second chatgpt.com turn. Specify: tree top-down, real logos for the named services, orange accent on the write-back path, 16:9, no clutter.
+4. **Generate post text** — by default, use chatgpt.com browser path (Thinking model, separate turn from image). If user has codex CLI working and not over usage limit, that's also valid. Build a focused prompt embedding the brief + the opinionated structure rules + the banned-vocabulary list.
 
-5. **Save both artifacts** to a working directory the user can find — recommend `.playwright-mcp/linkedin-post-<topic-slug>.md` and `.playwright-mcp/linkedin-diagram-<topic-slug>.png`.
+5. **Generate diagram** (if requested) — second chatgpt.com turn. Specify the real architecture from step 3 (or a tree top-down for conceptual posts), real logos for the named services, orange accent on the write-back/calibration path, 16:9, no clutter.
 
-6. **Show user** the post text inline (markdown) and the diagram (Read the PNG). AskUserQuestion: approve / tweak text / regenerate diagram / cancel.
+6. **Save both artifacts** to a working directory the user can find — recommend `.playwright-mcp/linkedin-post-<topic-slug>.md` and `.playwright-mcp/linkedin-diagram-<topic-slug>.png`.
 
-7. **On approve** → switch to publish phase.
+7. **Show user** the post text inline (markdown) and the diagram (Read the PNG). AskUserQuestion: approve / tweak text / regenerate diagram / cancel. If the user asks to regenerate the diagram with a different layout, see the image-edit-stickiness failure mode — do it in a fresh chat.
+
+8. **On approve** → switch to publish phase.
 
 ### Mode: `publish` (or last step of `full`)
 
-1. Verify `--file` and `--image` (or in full mode, the artifacts from step 5) exist.
+1. Verify `--file` and `--image` (or in full mode, the artifacts from step 6) exist.
 2. Navigate to `https://www.linkedin.com/`, handle login.
 3. Click "Start a post". Type text. Add media. Next.
 4. Screenshot composer. AskUserQuestion final approval.
@@ -118,7 +136,7 @@ When the user wants a visual (default: ask), the diagram should be:
 
 ### Mode: `draft` (stops before publish)
 
-Steps 1–6 of full mode, but skip step 7. Tell user: "Drafted. To publish later: `/linkedin-post publish --file <path> --image <path>`."
+Steps 1–7 of full mode, but skip step 8. Tell user: "Drafted. To publish later: `/linkedin-post publish --file <path> --image <path>`."
 
 ## Failure modes + fallbacks
 
@@ -127,6 +145,8 @@ Steps 1–6 of full mode, but skip step 7. Tell user: "Drafted. To publish later
 | chatgpt.com shows "Log in" buttons | Playwright browser is isolated, no cookies | Ask user to log in in the playwright window. Do not attempt to drive the login form. |
 | ChatGPT response says "You've hit your usage limit. Upgrade to Pro..." | Subscription rate-limited | Offer: wait until reset / user pastes API key / agent drafts manually using conversation context. |
 | GPT generates only image, not text (or vice versa) | Multi-task collapse in Thinking model | Send the missing piece as a follow-up turn. |
+| ChatGPT re-renders the OLD diagram when asked to regenerate with a new layout | In-conversation image gen *edits* the prior image; a same-thread "redo with this layout" anchors to the old composition and ignores new layout instructions | Start a FRESH chat (`browser_navigate("https://chatgpt.com/")`) and generate the diagram standalone with the full prompt. Never iterate layout changes in the same thread. Minor tweaks (recolor, fix a typo) are fine to do in-thread; structural layout changes are not. |
+| Screenshot of a "Generated image" opens/captures the wrong (older) image | Multiple generated images in one chat share the same accessible name; `getByRole('button', {name: 'Generated image: ...'})` matches the FIRST one | Re-snapshot, take the exact `ref` of the LATEST `button "Generated image: ..."`, and target that ref. Or just use a fresh chat so there is only one image. |
 | `browser_take_screenshot` errors "File access denied: /tmp/..." | Playwright MCP has restricted roots | Save to `.playwright-mcp/` instead — always inside the allowed root. |
 | `browser_snapshot()` result exceeds token limit | Page is huge (LinkedIn feed is) | Pass `filename: ".playwright-mcp/snap-N.md"` and grep the file for the elements you need (e.g., `grep -nE "Start a post\|textbox\|Post\""`). |
 | LinkedIn auto-signin lands on a security check | Google account isn't already trusted | Ask user to complete the check in the playwright window, wait for `/feed/` URL, then continue. |
